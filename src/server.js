@@ -15,19 +15,36 @@ const debugRoutes = require("./routes/debugRoutes");
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+/* ---------------------- CORS setup ---------------------- */
+const allowedOrigins = [
+  process.env.CORS_ORIGIN, // optional from .env
+  "http://localhost:5173",
+  "https://booking-backend-9s77.onrender.com",
+].filter(Boolean); // remove undefined/null
 
-const allowedOrigin = process.env.CORS_ORIGIN || "http://localhost:5173";
+const corsOptions = {
+  origin: function (origin, callback) {
+    // allow tools like Postman / curl / mobile apps (no origin header)
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      return callback(new Error("Not allowed by CORS: " + origin));
+    }
+  },
+  credentials: true,
+};
+
+/* -------------------------------------------------------- */
 
 // security headers
 app.use(helmet());
 
-// CORS (this will also respond to OPTIONS automatically in Express 5)
-app.use(
-  cors({
-    origin: allowedOrigin,
-    credentials: true,
-  })
-);
+// CORS (only once)
+app.use(cors(corsOptions));
 
 // parse JSON bodies
 app.use(express.json());
@@ -76,5 +93,4 @@ app.use((err, req, res, next) => {
 // boot server
 app.listen(PORT, () => {
   console.log(`✅ API server running on http://localhost:${PORT}`);
-
 });
