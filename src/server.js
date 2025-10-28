@@ -20,7 +20,7 @@ const allowedOrigins = [
   process.env.CORS_ORIGIN, // optional from .env
   "http://localhost:5173",
   "https://booking-backend-9s77.onrender.com",
-  "https://admindashboard988.netlify.app/"
+  "https://admindashboard988.netlify.app"
 ].filter(Boolean); // remove undefined/null
 
 const corsOptions = {
