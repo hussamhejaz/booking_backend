@@ -12,23 +12,25 @@ const superadminSalonRoutes = require("./routes/superadmin/salonRoutes");
 const superAdminStatsRoutes = require("./routes/superadmin/statsRoutes");
 const debugRoutes = require("./routes/debugRoutes");
 
+// NEW: owner routes
+const ownerAuthRoutes = require("./routes/owner/authRoutes");
+const ownerSectionRoutes = require("./routes/owner/sectionRoutes");
+
+
 const app = express();
 const PORT = process.env.PORT || 4000;
 
 /* ---------------------- CORS setup ---------------------- */
 const allowedOrigins = [
-  process.env.CORS_ORIGIN, // optional from .env
+  process.env.CORS_ORIGIN,
   "http://localhost:5173",
   "https://booking-backend-9s77.onrender.com",
   "https://admindashboard988.netlify.app"
-].filter(Boolean); // remove undefined/null
+].filter(Boolean);
 
 const corsOptions = {
   origin: function (origin, callback) {
-    // allow tools like Postman / curl / mobile apps (no origin header)
-    if (!origin) {
-      return callback(null, true);
-    }
+    if (!origin) return callback(null, true); // allow Postman/etc.
 
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
@@ -38,26 +40,17 @@ const corsOptions = {
   },
   credentials: true,
 };
-
 /* -------------------------------------------------------- */
 
-// security headers
 app.use(helmet());
-
-// CORS (only once)
 app.use(cors(corsOptions));
-
-// parse JSON bodies
 app.use(express.json());
-
-// request logging
 app.use(morgan("dev"));
 
-// basic rate limiting
 app.use(
   rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: 100,            // max requests / IP / minute
+    windowMs: 60 * 1000,
+    max: 100,
     standardHeaders: true,
     legacyHeaders: false,
   })
@@ -72,7 +65,7 @@ app.get("/health", (req, res) => {
   });
 });
 
-// debug (temporary)
+// debug
 app.use("/debug", debugRoutes);
 
 // super admin API
@@ -80,18 +73,21 @@ app.use("/api/superadmin/auth", superAdminAuthRoutes);
 app.use("/api/superadmin/salons", superadminSalonRoutes);
 app.use("/api/superadmin/stats", superAdminStatsRoutes);
 
-// 404 fallback
+// OWNER API (public login first)
+app.use("/api/owner/auth", ownerAuthRoutes);
+app.use("/api/owner/sections", ownerSectionRoutes);
+
+// 404
 app.use((req, res) => {
   res.status(404).json({ ok: false, error: "Not found" });
 });
 
-// global error handler
+// error handler
 app.use((err, req, res, next) => {
   console.error("Unhandled error:", err);
   res.status(500).json({ ok: false, error: "Internal server error" });
 });
 
-// boot server
 app.listen(PORT, () => {
   console.log(`✅ API server running on http://localhost:${PORT}`);
 });
