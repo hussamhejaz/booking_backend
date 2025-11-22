@@ -12,9 +12,33 @@ const superadminSalonRoutes = require("./routes/superadmin/salonRoutes");
 const superAdminStatsRoutes = require("./routes/superadmin/statsRoutes");
 const debugRoutes = require("./routes/debugRoutes");
 
-// NEW: owner routes
+// owner routes
 const ownerAuthRoutes = require("./routes/owner/authRoutes");
 const ownerSectionRoutes = require("./routes/owner/sectionRoutes");
+const ownerProfileRoutes = require("./routes/owner/profileRoutes");
+const ownerWorkingHoursRoutes = require("./routes/owner/workingHoursRoutes");
+const homeServicesRoutes = require("./routes/owner/homeServices");
+const ownerOffersRoutes = require("./routes/owner/offersRoutes");
+const ownerPricingRoutes = require("./routes/owner/pricingRoutes");
+const ownerBookingRoutes = require("./routes/owner/bookingRoutes");
+const homeServiceBookingRoutes = require("./routes/owner/homeServiceBookingRoutes"); 
+const ownerReviewsRoutes = require("./routes/owner/reviewsRoutes");
+
+const ownerDashboardRoutes = require("./routes/owner/dashboardRoutes");
+const ownerAvailabilityRoutes = require("./routes/owner/availabilityRoutes");
+const ownerTimeSlotRoutes = require("./routes/owner/timeSlotRoutes");
+
+// public routes
+const publicHomeServicesRoutes = require("./routes/public/homeServices");
+const publicSectionsRoutes = require("./routes/public/sections");
+const publicWorkingHoursRoutes = require("./routes/public/workingHours"); 
+const publicOffersRoutes = require("./routes/public/offers");
+const publicServicesRoutes = require("./routes/public/services");
+const publicHoursRoutes = require("./routes/public/hours");
+const publicHomeServiceBookingRoutes = require("./routes/public/homeServiceBookings");
+const publicReviewsRoutes = require("./routes/public/reviewsRoutes");
+
+const publicBookingRoutes = require("./routes/public/bookings");
 
 
 const app = express();
@@ -25,13 +49,13 @@ const allowedOrigins = [
   process.env.CORS_ORIGIN,
   "http://localhost:5173",
   "https://booking-backend-9s77.onrender.com",
-  "https://admindashboard988.netlify.app"
+  "https://admindashboard988.netlify.app",
+  "http://localhost:5174"
 ].filter(Boolean);
 
 const corsOptions = {
   origin: function (origin, callback) {
-    if (!origin) return callback(null, true); // allow Postman/etc.
-
+    if (!origin) return callback(null, true);
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     } else {
@@ -68,14 +92,41 @@ app.get("/health", (req, res) => {
 // debug
 app.use("/debug", debugRoutes);
 
-// super admin API
+// Superadmin routes
 app.use("/api/superadmin/auth", superAdminAuthRoutes);
 app.use("/api/superadmin/salons", superadminSalonRoutes);
 app.use("/api/superadmin/stats", superAdminStatsRoutes);
 
-// OWNER API (public login first)
+// OWNER API
 app.use("/api/owner/auth", ownerAuthRoutes);
 app.use("/api/owner/sections", ownerSectionRoutes);
+app.use("/api/owner/profile", ownerProfileRoutes);
+app.use("/api/owner/working-hours", ownerWorkingHoursRoutes);
+app.use("/api/owner/home-services", homeServicesRoutes);
+app.use("/api/owner/offers", ownerOffersRoutes); 
+app.use("/api/owner", ownerPricingRoutes);
+app.use("/api/owner/bookings", ownerBookingRoutes);
+app.use("/api/owner/home-service-bookings", homeServiceBookingRoutes);
+app.use("/api/owner/reviews", ownerReviewsRoutes);
+
+app.use("/api/owner/dashboard", ownerDashboardRoutes);
+app.use("/api/owner/availability", ownerAvailabilityRoutes);
+app.use("/api/owner/time-slots", ownerTimeSlotRoutes);
+
+// Public routes
+app.use("/api/public", publicHomeServicesRoutes);
+app.use("/api/public", publicSectionsRoutes); 
+app.use("/api/public", publicWorkingHoursRoutes);
+app.use("/api/public", publicOffersRoutes);
+app.use("/api/public", publicServicesRoutes);
+app.use("/api/public", publicHoursRoutes);
+app.use("/api/public", publicHomeServiceBookingRoutes);
+app.use("/api/public", publicReviewsRoutes);
+
+app.use("/api/public", publicBookingRoutes);
+
+
+
 
 // 404
 app.use((req, res) => {
@@ -90,4 +141,5 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`✅ API server running on http://localhost:${PORT}`);
+ 
 });
