@@ -217,7 +217,75 @@ async function createPublicReview(req, res) {
   }
 }
 
+async function getPublicReviewFeatures(req, res) {
+  try {
+    const { salonId } = req.params;
+    if (!salonId) {
+      return res.status(400).json({
+        ok: false,
+        error: "MISSING_SALON_ID",
+      });
+    }
+
+    const { salon, error: salonError } = await fetchActiveSalon(salonId);
+    if (salonError) {
+      const status = salonError === "SUPABASE_NOT_CONFIGURED" ? 500 : 404;
+      return res.status(status).json({
+        ok: false,
+        error: salonError,
+      });
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from("reviews")
+      .select("rating")
+      .eq("salon_id", salonId)
+      .eq("is_visible", true);
+
+    if (error) {
+      console.error("getPublicReviewFeatures error:", error);
+      return res.status(500).json({
+        ok: false,
+        error: "FETCH_REVIEW_FEATURES_FAILED",
+        details: error.message,
+      });
+    }
+
+    const total = (data || []).length;
+    const distribution = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+    let sum = 0;
+
+    (data || []).forEach((review) => {
+      const ratingValue = Number(review.rating);
+      if (Number.isNaN(ratingValue)) return;
+      const bounded = Math.max(1, Math.min(5, ratingValue));
+      sum += bounded;
+      distribution[bounded] += 1;
+    });
+
+    const average = total ? Math.round((sum / total) * 10) / 10 : 0;
+
+    return res.json({
+      ok: true,
+      salon: {
+        id: salon.id,
+        name: salon.name,
+      },
+      total,
+      average,
+      distribution,
+    });
+  } catch (err) {
+    console.error("getPublicReviewFeatures fatal:", err);
+    return res.status(500).json({
+      ok: false,
+      error: "SERVER_ERROR",
+    });
+  }
+}
+
 module.exports = {
   listPublicReviews,
   createPublicReview,
+  getPublicReviewFeatures,
 };
