@@ -1,6 +1,34 @@
 // src/controllers/public/offersController.js
 const { supabaseAdmin } = require("../../supabase");
 
+// Helper to get valid categories for a salon
+async function getValidCategories(salonId) {
+  if (!supabaseAdmin) return [];
+
+  try {
+    const { data: customCategories } = await supabaseAdmin
+      .from("salon_categories")
+      .select("value, label, icon")
+      .eq("salon_id", salonId);
+
+    const defaultCategories = [
+      { value: "scissors", label: "Hair Services", icon: "scissors" },
+      { value: "nails", label: "Nail Care", icon: "nails" },
+      { value: "makeup", label: "Makeup", icon: "makeup" },
+      { value: "spa", label: "Spa Treatments", icon: "spa" },
+      { value: "star", label: "Premium Services", icon: "star" },
+      { value: "facial", label: "Facial Care", icon: "facial" },
+      { value: "massage", label: "Massage", icon: "massage" },
+      { value: "waxing", label: "Waxing", icon: "waxing" },
+    ];
+
+    return [...defaultCategories, ...(customCategories || [])];
+  } catch (error) {
+    console.error("getValidCategories error:", error);
+    return [];
+  }
+}
+
 // GET /api/public/:salonId/offers
 async function listPublicOffers(req, res) {
   try {
@@ -20,7 +48,6 @@ async function listPublicOffers(req, res) {
       });
     }
 
-    // First, verify the salon exists and is active
     const { data: salon, error: salonError } = await supabaseAdmin
       .from("salons")
       .select("id, name, brand_color, is_active")
@@ -35,9 +62,8 @@ async function listPublicOffers(req, res) {
       });
     }
 
-    // Get active offers for this salon
-    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-    
+    const today = new Date().toISOString().split("T")[0];
+
     const { data: offers, error: offersError } = await supabaseAdmin
       .from("offers")
       .select(`
@@ -55,12 +81,13 @@ async function listPublicOffers(req, res) {
         terms_conditions,
         max_uses,
         used_count,
+        service_id,
         created_at
       `)
       .eq("salon_id", salonId)
       .eq("is_active", true)
-      .lte("start_date", today) // offers that have started
-      .gte("end_date", today)   // offers that haven't expired
+      .lte("start_date", today)
+      .gte("end_date", today)
       .order("created_at", { ascending: false });
 
     if (offersError) {
@@ -72,18 +99,16 @@ async function listPublicOffers(req, res) {
       });
     }
 
-    // Filter offers that haven't reached max_uses (if max_uses is set)
-    const validOffers = (offers || []).filter(offer => 
-      offer.max_uses === null || offer.used_count < offer.max_uses
+    const validOffers = (offers || []).filter(
+      (offer) => offer.max_uses === null || offer.used_count < offer.max_uses
     );
 
-    // Get categories for mapping
     const categories = await getValidCategories(salonId);
 
-    // Map category values to full category objects
-    const offersWithCategories = validOffers.map(offer => ({
+    const offersWithCategories = validOffers.map((offer) => ({
       ...offer,
-      category_data: categories.find(cat => cat.value === offer.category) || null
+      category_data:
+        categories.find((cat) => cat.value === offer.category) || null,
     }));
 
     return res.json({
@@ -91,10 +116,10 @@ async function listPublicOffers(req, res) {
       salon: {
         id: salon.id,
         name: salon.name,
-        brand_color: salon.brand_color
+        brand_color: salon.brand_color,
       },
       offers: offersWithCategories,
-      categories: categories
+      categories,
     });
   } catch (err) {
     console.error("listPublicOffers fatal:", err);
@@ -124,7 +149,6 @@ async function getPublicOfferById(req, res) {
       });
     }
 
-    // Verify salon exists and is active
     const { data: salon, error: salonError } = await supabaseAdmin
       .from("salons")
       .select("id, is_active")
@@ -139,9 +163,8 @@ async function getPublicOfferById(req, res) {
       });
     }
 
-    const today = new Date().toISOString().split('T')[0];
-    
-    // Get the specific offer
+    const today = new Date().toISOString().split("T")[0];
+
     const { data: offer, error: offerError } = await supabaseAdmin
       .from("offers")
       .select(`
@@ -159,6 +182,7 @@ async function getPublicOfferById(req, res) {
         terms_conditions,
         max_uses,
         used_count,
+        service_id,
         created_at
       `)
       .eq("id", offerId)
@@ -175,7 +199,6 @@ async function getPublicOfferById(req, res) {
       });
     }
 
-    // Check if offer has reached max uses
     if (offer.max_uses !== null && offer.used_count >= offer.max_uses) {
       return res.status(404).json({
         ok: false,
@@ -183,14 +206,14 @@ async function getPublicOfferById(req, res) {
       });
     }
 
-    // Get categories for mapping
     const categories = await getValidCategories(salonId);
 
     return res.json({
       ok: true,
       offer: {
         ...offer,
-        category_data: categories.find(cat => cat.value === offer.category) || null
+        category_data:
+          categories.find((cat) => cat.value === offer.category) || null,
       },
     });
   } catch (err) {
@@ -214,26 +237,11 @@ async function getPublicOfferCategories(req, res) {
       });
     }
 
-    // Verify salon exists and is active
-    const { data: salon, error: salonError } = await supabaseAdmin
-      .from("salons")
-      .select("id, is_active")
-      .eq("id", salonId)
-      .eq("is_active", true)
-      .single();
-
-    if (salonError || !salon) {
-      return res.status(404).json({
-        ok: false,
-        error: "SALON_NOT_FOUND",
-      });
-    }
-
     const categories = await getValidCategories(salonId);
-    
+
     return res.json({
       ok: true,
-      categories: categories,
+      categories,
     });
   } catch (err) {
     console.error("getPublicOfferCategories fatal:", err);
@@ -248,7 +256,7 @@ async function getPublicOfferCategories(req, res) {
 async function getFeaturedOffers(req, res) {
   try {
     const { salonId } = req.params;
-    const { limit = 3 } = req.query; // Default to 3 featured offers
+    const { limit = 3 } = req.query;
 
     if (!salonId) {
       return res.status(400).json({
@@ -264,7 +272,6 @@ async function getFeaturedOffers(req, res) {
       });
     }
 
-    // Verify salon exists and is active
     const { data: salon, error: salonError } = await supabaseAdmin
       .from("salons")
       .select("id, name, brand_color, is_active")
@@ -279,10 +286,8 @@ async function getFeaturedOffers(req, res) {
       });
     }
 
-    const today = new Date().toISOString().split('T')[0];
-    
-    // Get featured offers (you might want to add a 'is_featured' column to offers table)
-    // For now, we'll get the most recent active offers
+    const today = new Date().toISOString().split("T")[0];
+
     const { data: offers, error: offersError } = await supabaseAdmin
       .from("offers")
       .select(`
@@ -300,6 +305,7 @@ async function getFeaturedOffers(req, res) {
         terms_conditions,
         max_uses,
         used_count,
+        service_id,
         created_at
       `)
       .eq("salon_id", salonId)
@@ -307,7 +313,7 @@ async function getFeaturedOffers(req, res) {
       .lte("start_date", today)
       .gte("end_date", today)
       .order("created_at", { ascending: false })
-      .limit(parseInt(limit));
+      .limit(parseInt(limit, 10));
 
     if (offersError) {
       console.error("getFeaturedOffers error:", offersError);
@@ -318,18 +324,16 @@ async function getFeaturedOffers(req, res) {
       });
     }
 
-    // Filter offers that haven't reached max_uses
-    const validOffers = (offers || []).filter(offer => 
-      offer.max_uses === null || offer.used_count < offer.max_uses
+    const validOffers = (offers || []).filter(
+      (offer) => offer.max_uses === null || offer.used_count < offer.max_uses
     );
 
-    // Get categories for mapping
     const categories = await getValidCategories(salonId);
 
-    // Map category values to full category objects
-    const offersWithCategories = validOffers.map(offer => ({
+    const offersWithCategories = validOffers.map((offer) => ({
       ...offer,
-      category_data: categories.find(cat => cat.value === offer.category) || null
+      category_data:
+        categories.find((cat) => cat.value === offer.category) || null,
     }));
 
     return res.json({
@@ -337,7 +341,7 @@ async function getFeaturedOffers(req, res) {
       salon: {
         id: salon.id,
         name: salon.name,
-        brand_color: salon.brand_color
+        brand_color: salon.brand_color,
       },
       offers: offersWithCategories,
     });
@@ -347,36 +351,6 @@ async function getFeaturedOffers(req, res) {
       ok: false,
       error: "SERVER_ERROR",
     });
-  }
-}
-
-// Helper function to get valid categories for a salon
-async function getValidCategories(salonId) {
-  if (!supabaseAdmin) return [];
-
-  try {
-    // Get custom categories
-    const { data: customCategories } = await supabaseAdmin
-      .from("salon_categories")
-      .select("value, label, icon")
-      .eq("salon_id", salonId);
-
-    // Default categories
-    const defaultCategories = [
-      { value: "scissors", label: "Hair Services", icon: "scissors" },
-      { value: "nails", label: "Nail Care", icon: "nails" },
-      { value: "makeup", label: "Makeup", icon: "makeup" },
-      { value: "spa", label: "Spa Treatments", icon: "spa" },
-      { value: "star", label: "Premium Services", icon: "star" },
-      { value: "facial", label: "Facial Care", icon: "facial" },
-      { value: "massage", label: "Massage", icon: "massage" },
-      { value: "waxing", label: "Waxing", icon: "waxing" }
-    ];
-
-    return [...defaultCategories, ...(customCategories || [])];
-  } catch (error) {
-    console.error("getValidCategories error:", error);
-    return [];
   }
 }
 

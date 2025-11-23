@@ -96,6 +96,7 @@ async function listBookings(req, res) {
       .select(
         `
         id,
+        salon_id,
         customer_name,
         customer_phone,
         customer_email,
@@ -107,6 +108,7 @@ async function listBookings(req, res) {
         status,
         service_id,
         home_service_id,
+        offer_id,
         source,
         confirmed_at,
         cancelled_at,
@@ -254,7 +256,8 @@ async function getBookingById(req, res) {
       .select(`
         *,
         services:service_id (id, name, description, price, duration_minutes),
-        home_services:home_service_id (id, name, description, price, duration_minutes, category)
+        home_services:home_service_id (id, name, description, price, duration_minutes, category),
+        offers:offer_id (id, title, final_price)
       `)
       .eq("id", bookingId)
       .eq("salon_id", salonId)
@@ -303,6 +306,7 @@ async function createBooking(req, res) {
       total_price,
       status = "confirmed",
       source = "owner",
+      offer_id, // optional; may be null
     } = req.body;
 
     if (!supabaseAdmin) {
@@ -347,7 +351,6 @@ async function createBooking(req, res) {
       });
     }
 
-    // Use service data directly instead of making additional queries
     const finalPrice = total_price || serviceData.price;
     const finalDuration = duration_minutes || serviceData.duration_minutes || 30;
 
@@ -374,6 +377,7 @@ async function createBooking(req, res) {
       salon_id: salonId,
       service_id: service_id || null,
       home_service_id: home_service_id || null,
+      offer_id: offer_id || null, // link booking to offer (optional)
       customer_name: customer_name.trim(),
       customer_email: customer_email?.trim() || null,
       customer_phone: customer_phone.trim(),
@@ -393,7 +397,8 @@ async function createBooking(req, res) {
       .select(`
         *,
         services:service_id (id, name, price, duration_minutes),
-        home_services:home_service_id (id, name, price, duration_minutes, category)
+        home_services:home_service_id (id, name, price, duration_minutes, category),
+        offers:offer_id (id, title, final_price)
       `)
       .single();
 
@@ -454,6 +459,7 @@ async function updateBooking(req, res) {
       status,
       service_id,
       home_service_id,
+      offer_id,
     } = req.body;
 
     // Verify booking belongs to salon and get existing data in one query
@@ -509,10 +515,12 @@ async function updateBooking(req, res) {
     if (customer_notes !== undefined) updates.customer_notes = customer_notes;
     if (booking_date !== undefined) updates.booking_date = booking_date;
     if (booking_time !== undefined) updates.booking_time = booking_time;
-    if (duration_minutes !== undefined) updates.duration_minutes = duration_minutes;
+    if (duration_minutes !== undefined)
+      updates.duration_minutes = duration_minutes;
     if (total_price !== undefined) updates.total_price = total_price;
     if (service_id !== undefined) updates.service_id = service_id;
     if (home_service_id !== undefined) updates.home_service_id = home_service_id;
+    if (offer_id !== undefined) updates.offer_id = offer_id;
 
     // Handle status changes and timestamps
     if (status !== undefined && status !== existingBooking.status) {
@@ -537,7 +545,8 @@ async function updateBooking(req, res) {
       .select(`
         *,
         services:service_id (id, name, price, duration_minutes),
-        home_services:home_service_id (id, name, price, duration_minutes, category)
+        home_services:home_service_id (id, name, price, duration_minutes, category),
+        offers:offer_id (id, title, final_price)
       `)
       .single();
 
@@ -653,10 +662,7 @@ async function getAvailability(req, res) {
       });
     }
 
-    // Create cache key for availability
-    const cacheKey = `availability:${salonId}:${date}:${
-      duration_minutes || "default"
-    }`;
+    const cacheKey = `availability:${salonId}:${date}:${duration_minutes || "default"}`;
 
     if (cache.has(cacheKey)) {
       const cached = cache.get(cacheKey);
@@ -666,7 +672,7 @@ async function getAvailability(req, res) {
       cache.delete(cacheKey);
     }
 
-    // Get working hours for the salon
+    // Get working hours for the salon (single row model)
     const { data: workingHours } = await supabaseAdmin
       .from("working_hours")
       .select("*")
@@ -688,11 +694,10 @@ async function getAvailability(req, res) {
       .eq("booking_date", date)
       .in("status", ["confirmed", "pending"]);
 
-    // Calculate available slots
     const availableSlots = calculateAvailableSlots(
       workingHours,
       existingBookings || [],
-      duration_minutes ? parseInt(duration_minutes) : null
+      duration_minutes ? parseInt(duration_minutes, 10) : null
     );
 
     const response = {
@@ -702,7 +707,6 @@ async function getAvailability(req, res) {
       working_hours: workingHours,
     };
 
-    // Cache availability data
     cache.set(cacheKey, {
       data: response,
       timestamp: Date.now(),
@@ -731,10 +735,7 @@ async function getBookingStats(req, res) {
       });
     }
 
-    // Create cache key for stats
-    const cacheKey = `stats:${salonId}:${start_date || "all"}:${
-      end_date || "all"
-    }`;
+    const cacheKey = `stats:${salonId}:${start_date || "all"}:${end_date || "all"}`;
 
     if (!nocache && cache.has(cacheKey)) {
       const cached = cache.get(cacheKey);
@@ -744,7 +745,6 @@ async function getBookingStats(req, res) {
       cache.delete(cacheKey);
     }
 
-    // Single query to get all required data
     let query = supabaseAdmin
       .from("bookings")
       .select(`
@@ -758,11 +758,8 @@ async function getBookingStats(req, res) {
       `)
       .eq("salon_id", salonId);
 
-    // Apply date filter if provided
     if (start_date && end_date) {
-      query = query
-        .gte("booking_date", start_date)
-        .lte("booking_date", end_date);
+      query = query.gte("booking_date", start_date).lte("booking_date", end_date);
     } else if (start_date) {
       query = query.gte("booking_date", start_date);
     } else if (end_date) {
@@ -779,20 +776,16 @@ async function getBookingStats(req, res) {
       });
     }
 
-    // Process data in memory
     const statusCounts = {};
     let totalRevenue = 0;
     const serviceCounts = {};
 
     bookings?.forEach((booking) => {
-      // Count by status
       statusCounts[booking.status] = (statusCounts[booking.status] || 0) + 1;
 
-      // Calculate revenue for confirmed/completed bookings
       if (["confirmed", "completed"].includes(booking.status)) {
         totalRevenue += parseFloat(booking.total_price || 0);
 
-        // Track service popularity
         const serviceKey = booking.service_id
           ? `service_${booking.service_id}`
           : `home_service_${booking.home_service_id}`;
@@ -811,7 +804,6 @@ async function getBookingStats(req, res) {
       }
     });
 
-    // Get top 5 popular services
     const popularServices = Object.values(serviceCounts)
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
@@ -829,7 +821,6 @@ async function getBookingStats(req, res) {
       period: { start_date, end_date },
     };
 
-    // Cache stats data
     cache.set(cacheKey, {
       data: response,
       timestamp: Date.now(),
@@ -872,7 +863,6 @@ async function checkBookingConflict(
         .slice(0, 8)
     );
 
-  // Exclude current booking when updating
   if (excludeBookingId) {
     query = query.neq("id", excludeBookingId);
   }
@@ -898,7 +888,7 @@ function calculateAvailableSlots(
 ) {
   const slots = [];
   const slotDuration = 30; // 30-minute intervals
-  const dayOfWeek = new Date().getDay(); // 0 = Sunday, 1 = Monday, etc.
+  const dayOfWeek = new Date().getDay();
 
   const dayKey = [
     "sunday",
@@ -910,18 +900,14 @@ function calculateAvailableSlots(
     "saturday",
   ][dayOfWeek];
 
-  if (
-    !workingHours[`${dayKey}_open`] ||
-    !workingHours[`${dayKey}_close`]
-  ) {
-    return slots; // Salon is closed
+  if (!workingHours[`${dayKey}_open`] || !workingHours[`${dayKey}_close`]) {
+    return slots;
   }
 
   const openTime = new Date(`1970-01-01T${workingHours[`${dayKey}_open`]}`);
   const closeTime = new Date(`1970-01-01T${workingHours[`${dayKey}_close`]}`);
 
   let currentTime = new Date(openTime);
-
   const duration = requestedDuration || 30;
 
   while (currentTime < closeTime) {
@@ -930,7 +916,6 @@ function calculateAvailableSlots(
     if (slotEnd <= closeTime) {
       const slotTime = currentTime.toTimeString().slice(0, 5);
 
-      // Check if slot conflicts with existing bookings
       const hasConflict = existingBookings.some((booking) => {
         const bookingTime = new Date(`1970-01-01T${booking.booking_time}`);
         const bookingEnd = new Date(
@@ -957,7 +942,6 @@ function calculateAvailableSlots(
 
 // Helper function to clear relevant caches
 function clearBookingCaches(salonId) {
-  // Clear all caches for this salon
   for (const [key] of cache) {
     if (
       key.startsWith(`bookings:${salonId}`) ||
@@ -984,7 +968,7 @@ async function batchProcessBookings(bookingIds, operation) {
   return results;
 }
 
-// For backward compatibility - cancelBooking now uses updateBooking
+// Backward compatibility
 function cancelBooking(req, res) {
   req.body = { status: "cancelled" };
   return updateBooking(req, res);
@@ -996,8 +980,8 @@ module.exports = {
   createBooking,
   updateBooking,
   deleteBooking,
-  cancelBooking, // Keep for backward compatibility
+  cancelBooking,
   getAvailability,
   getBookingStats,
-  batchProcessBookings, // Export batch helper
+  batchProcessBookings,
 };

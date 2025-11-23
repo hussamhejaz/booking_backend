@@ -4,7 +4,6 @@ const router = express.Router();
 // Import controllers
 const bookingController = require("../../controllers/public/bookingController");
 const servicesController = require("../../controllers/public/servicesController");
-
 // Booking routes
 router.get("/bookings/available-slots", bookingController.getAvailableSlots);
 router.post("/bookings", bookingController.createBooking);

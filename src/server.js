@@ -27,6 +27,7 @@ const ownerReviewsRoutes = require("./routes/owner/reviewsRoutes");
 const ownerDashboardRoutes = require("./routes/owner/dashboardRoutes");
 const ownerAvailabilityRoutes = require("./routes/owner/availabilityRoutes");
 const ownerTimeSlotRoutes = require("./routes/owner/timeSlotRoutes");
+const ownerContactRoutes = require("./routes/owner/contactRoutes");
 
 // public routes
 const publicHomeServicesRoutes = require("./routes/public/homeServices");
@@ -39,6 +40,7 @@ const publicHomeServiceBookingRoutes = require("./routes/public/homeServiceBooki
 const publicReviewsRoutes = require("./routes/public/reviewsRoutes");
 
 const publicBookingRoutes = require("./routes/public/bookings");
+const publicContactRoutes = require("./routes/public/contactRoutes");
 
 
 const app = express();
@@ -113,6 +115,7 @@ app.use("/api/owner/reviews", ownerReviewsRoutes);
 app.use("/api/owner/dashboard", ownerDashboardRoutes);
 app.use("/api/owner/availability", ownerAvailabilityRoutes);
 app.use("/api/owner/time-slots", ownerTimeSlotRoutes);
+app.use("/api/owner/contacts", ownerContactRoutes);
 
 // Public routes
 app.use("/api/public", publicHomeServicesRoutes);
@@ -125,6 +128,7 @@ app.use("/api/public", publicHomeServiceBookingRoutes);
 app.use("/api/public", publicReviewsRoutes);
 
 app.use("/api/public", publicBookingRoutes);
+app.use("/api/public", publicContactRoutes);
 
 
 

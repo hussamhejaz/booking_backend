@@ -28,15 +28,26 @@ function minutesToTimeString(minutes) {
 }
 
 function slotsFromWorkingDay(dayConfig, existingBookings, durationMinutes) {
-  if (!dayConfig || dayConfig.is_closed || !dayConfig.open_time || !dayConfig.close_time) {
+  if (
+    !dayConfig ||
+    dayConfig.is_closed ||
+    !dayConfig.open_time ||
+    !dayConfig.close_time
+  ) {
     return [];
   }
 
   const open = timeToMinutes(dayConfig.open_time);
   const close = timeToMinutes(dayConfig.close_time);
-  const breakStart = dayConfig.break_start ? timeToMinutes(dayConfig.break_start) : null;
-  const breakEnd = dayConfig.break_end ? timeToMinutes(dayConfig.break_end) : null;
-  const slotInterval = dayConfig.slot_interval ? parseInt(dayConfig.slot_interval, 10) : 30;
+  const breakStart = dayConfig.break_start
+    ? timeToMinutes(dayConfig.break_start)
+    : null;
+  const breakEnd = dayConfig.break_end
+    ? timeToMinutes(dayConfig.break_end)
+    : null;
+  const slotInterval = dayConfig.slot_interval
+    ? parseInt(dayConfig.slot_interval, 10)
+    : 30;
   const duration = durationMinutes || 30;
 
   const busyWindows = (existingBookings || []).map((booking) => {
@@ -50,14 +61,14 @@ function slotsFromWorkingDay(dayConfig, existingBookings, durationMinutes) {
     const end = start + duration;
 
     if (breakStart !== null && breakEnd !== null) {
-      const overlapsBreak = Math.max(start, breakStart) < Math.min(end, breakEnd);
-      if (overlapsBreak) {
-        continue;
-      }
+      const overlapsBreak =
+        Math.max(start, breakStart) < Math.min(end, breakEnd);
+      if (overlapsBreak) continue;
     }
 
     const overlapsBooking = busyWindows.some(
-      ({ start: busyStart, end: busyEnd }) => Math.max(start, busyStart) < Math.min(end, busyEnd)
+      ({ start: busyStart, end: busyEnd }) =>
+        Math.max(start, busyStart) < Math.min(end, busyEnd)
     );
 
     if (!overlapsBooking) {
@@ -99,11 +110,13 @@ async function createPublicBooking(req, res) {
       service_id,
       duration_minutes,
       total_price,
+      offer_id, // 👈 جديد
     } = req.body;
+
     const booking_date = req.body.booking_date;
     const booking_time = req.body.booking_time;
 
-    // Ensure salon exists and active
+    // تأكد أن الصالون موجود وفعّال
     const { data: salon, error: salonError } = await supabaseAdmin
       .from("salons")
       .select("id, is_active")
@@ -118,6 +131,7 @@ async function createPublicBooking(req, res) {
       });
     }
 
+    // تأكد أن الخدمة موجودة وفعّالة
     const { data: service, error: serviceError } = await supabaseAdmin
       .from("services")
       .select("id, salon_id, duration_minutes, price, is_active")
@@ -133,9 +147,67 @@ async function createPublicBooking(req, res) {
       });
     }
 
-    const actualDuration = duration_minutes || service.duration_minutes || 30;
+    // 🔗 لو فيه offer_id نجيبه ونتأكد منه
+    let offer = null;
+    if (offer_id) {
+      const today = new Date().toISOString().split("T")[0];
 
-    // Validate working hours for date/time
+      const { data: offerData, error: offerError } = await supabaseAdmin
+        .from("offers")
+        .select(
+          `
+          id,
+          salon_id,
+          service_id,
+          start_date,
+          end_date,
+          is_active,
+          max_uses,
+          used_count,
+          final_price,
+          original_price
+        `
+        )
+        .eq("id", offer_id)
+        .eq("salon_id", salonId)
+        .eq("is_active", true)
+        .lte("start_date", today)
+        .gte("end_date", today)
+        .single();
+
+      if (offerError || !offerData) {
+        return res.status(404).json({
+          ok: false,
+          error: "OFFER_NOT_FOUND_OR_INACTIVE",
+        });
+      }
+
+      // العرض لازم يكون مرتبط بنفس الخدمة
+      if (offerData.service_id && offerData.service_id !== service_id) {
+        return res.status(400).json({
+          ok: false,
+          error: "OFFER_SERVICE_MISMATCH",
+          details: "هذا العرض مربوط بخدمة مختلفة.",
+        });
+      }
+
+      if (
+        offerData.max_uses !== null &&
+        offerData.used_count >= offerData.max_uses
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error: "OFFER_MAX_USES_REACHED",
+        });
+      }
+
+      offer = offerData;
+    }
+
+    const actualDuration =
+      duration_minutes || service.duration_minutes || 30;
+
+    // ✅ التحقق من أوقات العمل
     const { data: workingHours, error: hoursError } = await supabaseAdmin
       .from("working_hours")
       .select("*")
@@ -150,7 +222,9 @@ async function createPublicBooking(req, res) {
     }
 
     const bookingDay = new Date(`${booking_date}T00:00:00Z`).getUTCDay();
-    const dayConfig = (workingHours || []).find((day) => day.day_of_week === bookingDay);
+    const dayConfig = (workingHours || []).find(
+      (day) => day.day_of_week === bookingDay
+    );
 
     if (!dayConfig || dayConfig.is_closed) {
       return res.status(400).json({
@@ -175,7 +249,8 @@ async function createPublicBooking(req, res) {
     if (dayConfig.break_start && dayConfig.break_end) {
       const breakStart = timeToMinutes(dayConfig.break_start);
       const breakEnd = timeToMinutes(dayConfig.break_end);
-      const overlapsBreak = Math.max(requestedStart, breakStart) < Math.min(requestedEnd, breakEnd);
+      const overlapsBreak =
+        Math.max(requestedStart, breakStart) < Math.min(requestedEnd, breakEnd);
       if (overlapsBreak) {
         return res.status(400).json({
           ok: false,
@@ -184,7 +259,7 @@ async function createPublicBooking(req, res) {
       }
     }
 
-    // Check conflicts with existing bookings
+    // ✅ التحقق من التعارض
     const { data: overlapping, error: overlapError } = await supabaseAdmin
       .from("bookings")
       .select("id, booking_time, duration_minutes")
@@ -205,14 +280,23 @@ async function createPublicBooking(req, res) {
         return res.status(409).json({
           ok: false,
           error: "BOOKING_CONFLICT",
-          details: "Selected time slot is no longer available, please choose a different slot.",
+          details:
+            "Selected time slot is no longer available, please choose a different slot.",
         });
       }
     }
 
+    // 💰 تحديد السعر النهائي: الأولوية لسعر العرض
+    const priceFromOffer = offer?.final_price ?? null;
+    const finalTotalPrice =
+      total_price ??
+      priceFromOffer ??
+      service.price;
+
     const payload = {
       salon_id: salonId,
       service_id,
+      offer_id: offer ? offer.id : null, // 👈 تخزين العرض
       customer_name: customer_name.trim(),
       customer_email: customer_email?.trim() || null,
       customer_phone: customer_phone.trim(),
@@ -220,7 +304,7 @@ async function createPublicBooking(req, res) {
       booking_date,
       booking_time,
       duration_minutes: actualDuration,
-      total_price: total_price || service.price,
+      total_price: finalTotalPrice,
       status: "pending",
       source: "public",
     };
@@ -243,6 +327,22 @@ async function createPublicBooking(req, res) {
         error: "CREATE_BOOKING_FAILED",
         details: error.message,
       });
+    }
+
+    // 📈 تحديث used_count للعرض لو موجود
+    if (offer) {
+      const { error: updateOfferError } = await supabaseAdmin
+        .from("offers")
+        .update({ used_count: (offer.used_count || 0) + 1 })
+        .eq("id", offer.id)
+        .eq("salon_id", salonId);
+
+      if (updateOfferError) {
+        console.error(
+          "createPublicBooking update offer used_count error:",
+          updateOfferError
+        );
+      }
     }
 
     return res.status(201).json({
@@ -307,7 +407,9 @@ async function getPublicAvailability(req, res) {
     }
 
     const dayOfWeek = new Date(`${date}T00:00:00Z`).getUTCDay();
-    const dayConfig = (workingHours || []).find((day) => day.day_of_week === dayOfWeek);
+    const dayConfig = (workingHours || []).find(
+      (day) => day.day_of_week === dayOfWeek
+    );
 
     if (!dayConfig || dayConfig.is_closed) {
       return res.json({
@@ -318,12 +420,13 @@ async function getPublicAvailability(req, res) {
       });
     }
 
-    const { data: existingBookings, error: bookingError } = await supabaseAdmin
-      .from("bookings")
-      .select("booking_time, duration_minutes")
-      .eq("salon_id", salonId)
-      .eq("booking_date", date)
-      .in("status", ["confirmed", "pending"]);
+    const { data: existingBookings, error: bookingError } =
+      await supabaseAdmin
+        .from("bookings")
+        .select("booking_time, duration_minutes")
+        .eq("salon_id", salonId)
+        .eq("booking_date", date)
+        .in("status", ["confirmed", "pending"]);
 
     if (bookingError) {
       console.error("getPublicAvailability bookings error:", bookingError);
