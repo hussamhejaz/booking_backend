@@ -28,6 +28,8 @@ const ownerDashboardRoutes = require("./routes/owner/dashboardRoutes");
 const ownerAvailabilityRoutes = require("./routes/owner/availabilityRoutes");
 const ownerTimeSlotRoutes = require("./routes/owner/timeSlotRoutes");
 const ownerContactRoutes = require("./routes/owner/contactRoutes");
+const ownerClientRoutes = require("./routes/owner/clientRoutes");
+const ownerNotificationRoutes = require("./routes/owner/notificationRoutes");
 
 // public routes
 const publicHomeServicesRoutes = require("./routes/public/homeServices");
@@ -117,6 +119,8 @@ app.use("/api/owner/dashboard", ownerDashboardRoutes);
 app.use("/api/owner/availability", ownerAvailabilityRoutes);
 app.use("/api/owner/time-slots", ownerTimeSlotRoutes);
 app.use("/api/owner/contacts", ownerContactRoutes);
+app.use("/api/owner/clients", ownerClientRoutes);
+app.use("/api/owner/notifications", ownerNotificationRoutes);
 
 // Public routes
 app.use("/api/public", publicHomeServicesRoutes);

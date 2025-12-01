@@ -11,6 +11,8 @@ const {
   deleteBooking,
   getAvailability,
   getBookingStats,
+  archiveBooking,
+  unarchiveBooking,
 } = require("../../controllers/owner/bookingController");
 
 // Require owner authentication for everything below
@@ -25,6 +27,12 @@ router.get("/stats/overview", getBookingStats);
 // GET /api/owner/bookings/calendar/availability
 router.get("/calendar/availability", getAvailability);
 
+// POST /api/owner/bookings/:bookingId/archive
+router.post("/:bookingId/archive", archiveBooking);
+
+// POST /api/owner/bookings/:bookingId/unarchive
+router.post("/:bookingId/unarchive", unarchiveBooking);
+
 // GET /api/owner/bookings/:bookingId
 router.get("/:bookingId", getBookingById);
 
@@ -38,4 +46,3 @@ router.patch("/:bookingId", updateBooking);
 router.delete("/:bookingId", deleteBooking);
 
 module.exports = router;
-

@@ -1,5 +1,6 @@
 // controllers/public/homeServiceBookingController.js
 const { supabaseAdmin } = require("../../supabase");
+const { recordBookingNotification } = require("../../utils/notifications");
 
 function ensure(body, field) {
   if (
@@ -349,6 +350,22 @@ async function createPublicHomeServiceBooking(req, res) {
     }
 
     // ⚠️ notifications: جدولك محذوف، فخليه اختياري
+    recordBookingNotification({
+      salonId,
+      homeBookingId: booking?.id || null,
+      title: "New home-service booking received",
+      message: `${booking.customer_name || "Customer"} requested home service on ${booking.booking_date} at ${booking.booking_time}`,
+      metadata: {
+        home_booking_id: booking?.id,
+        booking_date: booking?.booking_date,
+        booking_time: booking?.booking_time,
+        status: booking?.status,
+        customer_name: booking?.customer_name,
+        customer_phone: booking?.customer_phone,
+        home_service_id: booking?.home_service_id,
+      },
+    });
+
     return res.status(201).json({
       ok: true,
       booking,

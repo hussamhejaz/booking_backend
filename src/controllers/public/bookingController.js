@@ -1,5 +1,6 @@
 // src/controllers/public/bookingController.js
 const { supabaseAdmin } = require("../../supabase");
+const { recordBookingNotification } = require("../../utils/notifications");
 
 function ensure(body, field) {
   if (
@@ -328,6 +329,23 @@ async function createPublicBooking(req, res) {
         details: error.message,
       });
     }
+
+    // Fire-and-forget notification
+    recordBookingNotification({
+      salonId,
+      bookingId: booking?.id || null,
+      title: "New booking received",
+      message: `${booking.customer_name || "Customer"} booked on ${booking.booking_date} at ${booking.booking_time}`,
+      metadata: {
+        booking_id: booking?.id,
+        booking_date: booking?.booking_date,
+        booking_time: booking?.booking_time,
+        status: booking?.status,
+        customer_name: booking?.customer_name,
+        customer_phone: booking?.customer_phone,
+        service_id: booking?.service_id,
+      },
+    });
 
     // 📈 تحديث used_count للعرض لو موجود
     if (offer) {

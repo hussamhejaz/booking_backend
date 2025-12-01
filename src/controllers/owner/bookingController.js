@@ -1,5 +1,11 @@
 // src/controllers/owner/bookingController.js
 const { supabaseAdmin } = require("../../supabase");
+const {
+  parseArchiveParams,
+  applyArchiveFilters,
+  validateArchiveAction,
+} = require("./bookingArchiveUtils");
+const { recordBookingNotification } = require("../../utils/notifications");
 
 // Simple in-memory cache (consider Redis for production)
 const cache = new Map();
@@ -44,6 +50,10 @@ function applyBookingFilters(query, filters) {
   return query;
 }
 
+function isPaidStatus(status) {
+  return status === "confirmed" || status === "completed";
+}
+
 // GET /api/owner/bookings
 async function listBookings(req, res) {
   try {
@@ -53,12 +63,14 @@ async function listBookings(req, res) {
       limit = 20,
       status,
       date,
-      start_date,
-      end_date,
-      customer_phone,
-      service_type,
-      nocache = false,
-    } = req.query;
+    start_date,
+    end_date,
+    customer_phone,
+    service_type,
+    include_archived,
+    archived_only,
+    nocache = false,
+  } = req.query;
 
     const parsedPage = Math.max(1, parseInt(page, 10) || 1);
     const parsedLimit = Math.max(1, parseInt(limit, 10) || 20);
@@ -90,6 +102,10 @@ async function listBookings(req, res) {
       customer_phone,
       service_type,
     };
+    const archiveFilters = parseArchiveParams({
+      include_archived,
+      archived_only,
+    });
 
     const baseQuery = supabaseAdmin
       .from("bookings")
@@ -106,6 +122,9 @@ async function listBookings(req, res) {
         duration_minutes,
         total_price,
         status,
+        archived,
+        archived_at,
+        archived_by,
         service_id,
         home_service_id,
         offer_id,
@@ -120,7 +139,10 @@ async function listBookings(req, res) {
       )
       .eq("salon_id", salonId);
 
-    const filteredQuery = applyBookingFilters(baseQuery, filters);
+    const filteredQuery = applyArchiveFilters(
+      applyBookingFilters(baseQuery, filters),
+      archiveFilters
+    );
 
     const { data: bookings = [], count, error } = await filteredQuery
       .order("booking_date", { ascending: false })
@@ -411,6 +433,24 @@ async function createBooking(req, res) {
       });
     }
 
+    // Fire-and-forget notification for owner-created bookings too
+    recordBookingNotification({
+      salonId,
+      bookingId: booking?.id || null,
+      title: "New booking created",
+      message: `${booking.customer_name || "Customer"} booked on ${booking.booking_date} at ${booking.booking_time}`,
+      metadata: {
+        booking_id: booking?.id,
+        booking_date: booking?.booking_date,
+        booking_time: booking?.booking_time,
+        status: booking?.status,
+        customer_name: booking?.customer_name,
+        customer_phone: booking?.customer_phone,
+        service_id: booking?.service_id,
+        home_service_id: booking?.home_service_id,
+      },
+    });
+
     // Clear relevant caches after creating a new booking
     clearBookingCaches(salonId);
 
@@ -532,6 +572,9 @@ async function updateBooking(req, res) {
         updates.cancelled_at = new Date().toISOString();
       } else if (status === "completed") {
         updates.completed_at = new Date().toISOString();
+        // auto-archive completed bookings so they only appear in archive views
+        updates.archived = true;
+        updates.archived_at = new Date().toISOString();
       }
     }
 
@@ -642,6 +685,206 @@ async function deleteBooking(req, res) {
   }
 }
 
+// POST /api/owner/bookings/:bookingId/archive
+async function archiveBooking(req, res) {
+  try {
+    const salonId = req.ownerUser.salon_id;
+    const { bookingId } = req.params;
+
+    if (!bookingId) {
+      return res.status(400).json({
+        ok: false,
+        error: "MISSING_BOOKING_ID",
+      });
+    }
+
+    if (!supabaseAdmin) {
+      return res.status(500).json({
+        ok: false,
+        error: "SUPABASE_NOT_CONFIGURED",
+      });
+    }
+
+    const { data: booking, error: fetchError } = await supabaseAdmin
+      .from("bookings")
+      .select(
+        `
+        *,
+        services:service_id (id, name, price, duration_minutes),
+        home_services:home_service_id (id, name, price, duration_minutes, category),
+        offers:offer_id (id, title, final_price)
+      `
+      )
+      .eq("id", bookingId)
+      .eq("salon_id", salonId)
+      .single();
+
+    if (fetchError || !booking) {
+      return res.status(404).json({
+        ok: false,
+        error: "BOOKING_NOT_FOUND",
+      });
+    }
+
+    const validation = validateArchiveAction(booking, "archive");
+    if (!validation.ok) {
+      return res.status(400).json({
+        ok: false,
+        error: validation.code,
+      });
+    }
+
+    if (validation.already) {
+      return res.json({
+        ok: true,
+        booking,
+      });
+    }
+
+    const now = new Date().toISOString();
+    const { data: updated, error } = await supabaseAdmin
+      .from("bookings")
+      .update({
+        archived: true,
+        archived_at: now,
+        archived_by: req.ownerUser?.id || null,
+        updated_at: now,
+      })
+      .eq("id", bookingId)
+      .eq("salon_id", salonId)
+      .select(
+        `
+        *,
+        services:service_id (id, name, price, duration_minutes),
+        home_services:home_service_id (id, name, price, duration_minutes, category),
+        offers:offer_id (id, title, final_price)
+      `
+      )
+      .single();
+
+    if (error) {
+      console.error("archiveBooking error:", error);
+      return res.status(500).json({
+        ok: false,
+        error: "ARCHIVE_BOOKING_FAILED",
+      });
+    }
+
+    clearBookingCaches(salonId);
+
+    return res.json({
+      ok: true,
+      booking: updated,
+    });
+  } catch (err) {
+    console.error("archiveBooking fatal:", err);
+    return res.status(500).json({
+      ok: false,
+      error: "SERVER_ERROR",
+    });
+  }
+}
+
+// POST /api/owner/bookings/:bookingId/unarchive
+async function unarchiveBooking(req, res) {
+  try {
+    const salonId = req.ownerUser.salon_id;
+    const { bookingId } = req.params;
+
+    if (!bookingId) {
+      return res.status(400).json({
+        ok: false,
+        error: "MISSING_BOOKING_ID",
+      });
+    }
+
+    if (!supabaseAdmin) {
+      return res.status(500).json({
+        ok: false,
+        error: "SUPABASE_NOT_CONFIGURED",
+      });
+    }
+
+    const { data: booking, error: fetchError } = await supabaseAdmin
+      .from("bookings")
+      .select(
+        `
+        *,
+        services:service_id (id, name, price, duration_minutes),
+        home_services:home_service_id (id, name, price, duration_minutes, category),
+        offers:offer_id (id, title, final_price)
+      `
+      )
+      .eq("id", bookingId)
+      .eq("salon_id", salonId)
+      .single();
+
+    if (fetchError || !booking) {
+      return res.status(404).json({
+        ok: false,
+        error: "BOOKING_NOT_FOUND",
+      });
+    }
+
+    const validation = validateArchiveAction(booking, "unarchive");
+    if (!validation.ok) {
+      return res.status(400).json({
+        ok: false,
+        error: validation.code,
+      });
+    }
+
+    if (validation.already) {
+      return res.json({
+        ok: true,
+        booking,
+      });
+    }
+
+    const now = new Date().toISOString();
+    const { data: updated, error } = await supabaseAdmin
+      .from("bookings")
+      .update({
+        archived: false,
+        archived_at: null,
+        archived_by: null,
+        updated_at: now,
+      })
+      .eq("id", bookingId)
+      .eq("salon_id", salonId)
+      .select(
+        `
+        *,
+        services:service_id (id, name, price, duration_minutes),
+        home_services:home_service_id (id, name, price, duration_minutes, category),
+        offers:offer_id (id, title, final_price)
+      `
+      )
+      .single();
+
+    if (error) {
+      console.error("unarchiveBooking error:", error);
+      return res.status(500).json({
+        ok: false,
+        error: "UNARCHIVE_BOOKING_FAILED",
+      });
+    }
+
+    clearBookingCaches(salonId);
+
+    return res.json({
+      ok: true,
+      booking: updated,
+    });
+  } catch (err) {
+    console.error("unarchiveBooking fatal:", err);
+    return res.status(500).json({
+      ok: false,
+      error: "SERVER_ERROR",
+    });
+  }
+}
+
 // GET /api/owner/bookings/calendar/availability
 async function getAvailability(req, res) {
   try {
@@ -726,7 +969,7 @@ async function getAvailability(req, res) {
 async function getBookingStats(req, res) {
   try {
     const salonId = req.ownerUser.salon_id;
-    const { start_date, end_date, nocache = false } = req.query;
+    const { start_date, end_date, service_type, nocache = false } = req.query;
 
     if (!supabaseAdmin) {
       return res.status(500).json({
@@ -735,7 +978,7 @@ async function getBookingStats(req, res) {
       });
     }
 
-    const cacheKey = `stats:${salonId}:${start_date || "all"}:${end_date || "all"}`;
+    const cacheKey = `stats:${salonId}:${start_date || "all"}:${end_date || "all"}:${service_type || "all"}`;
 
     if (!nocache && cache.has(cacheKey)) {
       const cached = cache.get(cacheKey);
@@ -758,6 +1001,8 @@ async function getBookingStats(req, res) {
       `)
       .eq("salon_id", salonId);
 
+    query = applyBookingFilters(query, { service_type });
+
     if (start_date && end_date) {
       query = query.gte("booking_date", start_date).lte("booking_date", end_date);
     } else if (start_date) {
@@ -778,23 +1023,31 @@ async function getBookingStats(req, res) {
 
     const statusCounts = {};
     let totalRevenue = 0;
+    let paidBookingsCount = 0;
     const serviceCounts = {};
 
-    bookings?.forEach((booking) => {
+    (bookings || []).forEach((booking) => {
       statusCounts[booking.status] = (statusCounts[booking.status] || 0) + 1;
 
-      if (["confirmed", "completed"].includes(booking.status)) {
-        totalRevenue += parseFloat(booking.total_price || 0);
+      const price = Number(booking.total_price) || 0;
+
+      if (isPaidStatus(booking.status)) {
+        totalRevenue += price;
+        paidBookingsCount += 1;
 
         const serviceKey = booking.service_id
           ? `service_${booking.service_id}`
-          : `home_service_${booking.home_service_id}`;
+          : booking.home_service_id
+          ? `home_service_${booking.home_service_id}`
+          : null;
 
         const serviceName = booking.service_id
-          ? booking.services?.name
-          : booking.home_services?.name;
+          ? booking.services?.name || `Service #${booking.service_id}`
+          : booking.home_service_id
+          ? booking.home_services?.name || `Home service #${booking.home_service_id}`
+          : null;
 
-        if (serviceName) {
+        if (serviceKey && serviceName) {
           serviceCounts[serviceKey] = {
             name: serviceName,
             count: (serviceCounts[serviceKey]?.count || 0) + 1,
@@ -808,9 +1061,19 @@ async function getBookingStats(req, res) {
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
 
+    const roundedRevenue = Number.isFinite(totalRevenue)
+      ? parseFloat(totalRevenue.toFixed(2))
+      : 0;
+    const avgTicketValue =
+      paidBookingsCount > 0
+        ? parseFloat((totalRevenue / paidBookingsCount).toFixed(2))
+        : 0;
+
     const stats = {
       total_bookings: bookings?.length || 0,
-      total_revenue: parseFloat(totalRevenue.toFixed(2)),
+      paid_bookings_count: paidBookingsCount,
+      total_revenue: roundedRevenue,
+      avg_ticket_value: avgTicketValue,
       by_status: statusCounts,
       popular_services: popularServices,
     };
@@ -980,6 +1243,8 @@ module.exports = {
   createBooking,
   updateBooking,
   deleteBooking,
+  archiveBooking,
+  unarchiveBooking,
   cancelBooking,
   getAvailability,
   getBookingStats,
