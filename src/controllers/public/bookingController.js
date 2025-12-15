@@ -109,6 +109,7 @@ async function createPublicBooking(req, res) {
       customer_phone,
       customer_notes,
       service_id,
+      employee_id,
       duration_minutes,
       total_price,
       offer_id, // 👈 جديد
@@ -146,6 +147,48 @@ async function createPublicBooking(req, res) {
         ok: false,
         error: "SERVICE_NOT_FOUND",
       });
+    }
+
+    let employee = null;
+    if (employee_id) {
+      const { data: employeeData, error: employeeError } = await supabaseAdmin
+        .from("employees")
+        .select("id, full_name, role, is_active")
+        .eq("id", employee_id)
+        .eq("salon_id", salonId)
+        .single();
+
+      if (employeeError || !employeeData) {
+        return res.status(404).json({
+          ok: false,
+          error: "EMPLOYEE_NOT_FOUND",
+        });
+      }
+
+      if (!employeeData.is_active) {
+        return res.status(400).json({
+          ok: false,
+          error: "EMPLOYEE_INACTIVE",
+        });
+      }
+
+      const { data: assignment, error: assignmentError } = await supabaseAdmin
+        .from("service_employees")
+        .select("id")
+        .eq("salon_id", salonId)
+        .eq("service_id", service_id)
+        .eq("employee_id", employee_id)
+        .single();
+
+      if (assignmentError || !assignment) {
+        return res.status(400).json({
+          ok: false,
+          error: "EMPLOYEE_NOT_ASSIGNED",
+          details: "هذا الموظف غير مرتبط بهذه الخدمة.",
+        });
+      }
+
+      employee = employeeData;
     }
 
     // 🔗 لو فيه offer_id نجيبه ونتأكد منه
@@ -263,7 +306,7 @@ async function createPublicBooking(req, res) {
     // ✅ التحقق من التعارض
     const { data: overlapping, error: overlapError } = await supabaseAdmin
       .from("bookings")
-      .select("id, booking_time, duration_minutes")
+      .select("id, booking_time, duration_minutes, employee_id")
       .eq("salon_id", salonId)
       .eq("booking_date", booking_date)
       .in("status", ["confirmed", "pending"]);
@@ -272,6 +315,10 @@ async function createPublicBooking(req, res) {
       console.error("createPublicBooking overlap error:", overlapError);
     } else if (overlapping?.length) {
       const hasConflict = overlapping.some((booking) => {
+        if (employee_id && booking.employee_id && booking.employee_id !== employee_id) {
+          return false;
+        }
+
         const start = timeToMinutes(booking.booking_time);
         const end = start + (booking.duration_minutes || actualDuration);
         return Math.max(requestedStart, start) < Math.min(requestedEnd, end);
@@ -308,6 +355,7 @@ async function createPublicBooking(req, res) {
       total_price: finalTotalPrice,
       status: "pending",
       source: "public",
+      employee_id: employee ? employee.id : null,
     };
 
     const { data: booking, error } = await supabaseAdmin
@@ -316,7 +364,8 @@ async function createPublicBooking(req, res) {
       .select(
         `
         *,
-        services:service_id (id, name, price, duration_minutes)
+        services:service_id (id, name, price, duration_minutes),
+        employees:employee_id (id, full_name, role, phone, email, is_active)
       `
       )
       .single();
@@ -344,6 +393,7 @@ async function createPublicBooking(req, res) {
         customer_name: booking?.customer_name,
         customer_phone: booking?.customer_phone,
         service_id: booking?.service_id,
+        employee_id: booking?.employee_id,
       },
     });
 
@@ -381,7 +431,7 @@ async function createPublicBooking(req, res) {
 async function getPublicAvailability(req, res) {
   try {
     const { salonId } = req.params;
-    const { date, duration_minutes } = req.query;
+    const { date, duration_minutes, employee_id } = req.query;
 
     if (!salonId || !date) {
       return res.status(400).json({
@@ -441,7 +491,7 @@ async function getPublicAvailability(req, res) {
     const { data: existingBookings, error: bookingError } =
       await supabaseAdmin
         .from("bookings")
-        .select("booking_time, duration_minutes")
+        .select("booking_time, duration_minutes, employee_id")
         .eq("salon_id", salonId)
         .eq("booking_date", date)
         .in("status", ["confirmed", "pending"]);
@@ -454,15 +504,23 @@ async function getPublicAvailability(req, res) {
       });
     }
 
+    const filteredBookings = employee_id
+      ? (existingBookings || []).filter(
+          (booking) =>
+            !booking.employee_id || booking.employee_id === employee_id
+        )
+      : existingBookings || [];
+
     const slots = slotsFromWorkingDay(
       dayConfig,
-      existingBookings || [],
+      filteredBookings,
       duration_minutes ? parseInt(duration_minutes, 10) : undefined
     );
 
     return res.json({
       ok: true,
       date,
+      employee_id: employee_id || null,
       available_slots: slots,
       working_day: dayConfig,
     });

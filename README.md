@@ -53,6 +53,10 @@ When service slots exist, `/api/owner/availability/slots` prefers them, falling 
 
 Availability requests (`/api/owner/availability/slots` and the public booking availability) now prioritize home-service slots, then salon-level slots, then working hours.
 
+### Employees per service
+
+`migrations/005_add_employees_and_service_assignments.sql` introduces `employees`, `service_employees`, and an optional `bookings.employee_id` reference so owners can assign staff to specific services and clients can pick who performs a booking. Apply it before using the new employee endpoints.
+
 ### Public availability API
 
 `GET /api/public/:salonId/hours` returns available slots for a given date, optionally scoped to a specific `service_id` or `home_service_id`. Query params:

@@ -30,6 +30,7 @@ const ownerTimeSlotRoutes = require("./routes/owner/timeSlotRoutes");
 const ownerContactRoutes = require("./routes/owner/contactRoutes");
 const ownerClientRoutes = require("./routes/owner/clientRoutes");
 const ownerNotificationRoutes = require("./routes/owner/notificationRoutes");
+const ownerEmployeeRoutes = require("./routes/owner/employeeRoutes");
 
 // public routes
 const publicHomeServicesRoutes = require("./routes/public/homeServices");
@@ -38,6 +39,7 @@ const publicWorkingHoursRoutes = require("./routes/public/workingHours");
 const publicOffersRoutes = require("./routes/public/offers");
 const publicServicesRoutes = require("./routes/public/services");
 const publicHoursRoutes = require("./routes/public/hours");
+const publicEmployeesRoutes = require("./routes/public/employees");
 const publicHomeServiceBookingRoutes = require("./routes/public/homeServiceBookings");
 const publicReviewsRoutes = require("./routes/public/reviewsRoutes");
 
@@ -121,6 +123,7 @@ app.use("/api/owner/time-slots", ownerTimeSlotRoutes);
 app.use("/api/owner/contacts", ownerContactRoutes);
 app.use("/api/owner/clients", ownerClientRoutes);
 app.use("/api/owner/notifications", ownerNotificationRoutes);
+app.use("/api/owner/employees", ownerEmployeeRoutes);
 
 // Public routes
 app.use("/api/public", publicHomeServicesRoutes);
@@ -129,6 +132,7 @@ app.use("/api/public", publicWorkingHoursRoutes);
 app.use("/api/public", publicOffersRoutes);
 app.use("/api/public", publicServicesRoutes);
 app.use("/api/public", publicHoursRoutes);
+app.use("/api/public", publicEmployeesRoutes);
 app.use("/api/public", publicHomeServiceBookingRoutes);
 app.use("/api/public", publicReviewsRoutes);
 

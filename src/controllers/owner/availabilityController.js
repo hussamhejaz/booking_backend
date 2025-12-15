@@ -139,6 +139,7 @@ async function getOwnerAvailableSlots(req, res) {
       home_service_id,
       duration_minutes,
       type,
+      employee_id,
     } = req.query;
 
     if (!salonId) {
@@ -248,7 +249,7 @@ async function getOwnerAvailableSlots(req, res) {
     } else {
       existingBookingsQuery = supabaseAdmin
         .from("bookings")
-        .select("booking_time, duration_minutes")
+        .select("booking_time, duration_minutes, employee_id")
         .eq("salon_id", salonId)
         .eq("booking_date", date)
         .in("status", ["confirmed", "pending"]);
@@ -310,7 +311,15 @@ async function getOwnerAvailableSlots(req, res) {
       console.error("getOwnerAvailableSlots manual slots error:", manualSlotsError);
     }
 
-    const busyWindows = buildBusyWindows(existingBookings, resolvedDuration);
+    const filteredBookings =
+      bookingType === "salon" && employee_id
+        ? (existingBookings || []).filter(
+            (booking) =>
+              !booking.employee_id || booking.employee_id === employee_id
+          )
+        : existingBookings || [];
+
+    const busyWindows = buildBusyWindows(filteredBookings, resolvedDuration);
 
     let availableSlots = [];
     let slotStrategy = "working_hours";
@@ -351,6 +360,7 @@ async function getOwnerAvailableSlots(req, res) {
     return res.json({
       ok: true,
       date,
+      employee_id: employee_id || null,
       duration_minutes: resolvedDuration,
       type: bookingType,
       available_slots: availableSlots,

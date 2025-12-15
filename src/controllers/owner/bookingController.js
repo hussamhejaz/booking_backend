@@ -63,14 +63,14 @@ async function listBookings(req, res) {
       limit = 20,
       status,
       date,
-    start_date,
-    end_date,
-    customer_phone,
-    service_type,
-    include_archived,
-    archived_only,
-    nocache = false,
-  } = req.query;
+      start_date,
+      end_date,
+      customer_phone,
+      service_type,
+      include_archived,
+      archived_only,
+      nocache = false,
+    } = req.query;
 
     const parsedPage = Math.max(1, parseInt(page, 10) || 1);
     const parsedLimit = Math.max(1, parseInt(limit, 10) || 20);
@@ -125,6 +125,7 @@ async function listBookings(req, res) {
         archived,
         archived_at,
         archived_by,
+        employee_id,
         service_id,
         home_service_id,
         offer_id,
@@ -214,7 +215,26 @@ async function listBookings(req, res) {
     const homeServiceMap = new Map(
       (homeServicesResult.data || []).map((service) => [service.id, service])
     );
-
+    const employeeIds = [
+      ...new Set(
+        bookings
+          .filter((booking) => booking.employee_id)
+          .map((booking) => booking.employee_id)
+      ),
+    ];
+    let employeeMap = new Map();
+    if (employeeIds.length > 0) {
+      const { data: employees, error: employeesError } = await supabaseAdmin
+        .from("employees")
+        .select("id, full_name, role, phone, email, is_active")
+        .eq("salon_id", salonId)
+        .in("id", employeeIds);
+      if (employeesError) {
+        console.error("listBookings employees lookup error:", employeesError);
+      } else {
+        employeeMap = new Map(employees.map((emp) => [emp.id, emp]));
+      }
+    }
     const enrichedBookings = bookings.map((booking) => ({
       ...booking,
       services: booking.service_id
@@ -222,6 +242,9 @@ async function listBookings(req, res) {
         : null,
       home_services: booking.home_service_id
         ? homeServiceMap.get(booking.home_service_id) || null
+        : null,
+      employee: booking.employee_id
+        ? employeeMap.get(booking.employee_id) || null
         : null,
     }));
 
@@ -279,7 +302,8 @@ async function getBookingById(req, res) {
         *,
         services:service_id (id, name, description, price, duration_minutes),
         home_services:home_service_id (id, name, description, price, duration_minutes, category),
-        offers:offer_id (id, title, final_price)
+        offers:offer_id (id, title, final_price),
+        employees:employee_id (id, full_name, role, phone, email, is_active)
       `)
       .eq("id", bookingId)
       .eq("salon_id", salonId)
@@ -324,6 +348,7 @@ async function createBooking(req, res) {
       booking_time,
       service_id,
       home_service_id,
+      employee_id,
       duration_minutes,
       total_price,
       status = "confirmed",
@@ -346,12 +371,19 @@ async function createBooking(req, res) {
       });
     }
 
+    if (employee_id && !service_id) {
+      return res.status(400).json({
+        ok: false,
+        error: "EMPLOYEE_REQUIRES_SERVICE",
+      });
+    }
+
     // Single service validation query
     let serviceQuery = null;
     if (service_id) {
       serviceQuery = supabaseAdmin
         .from("services")
-        .select("id, price, duration_minutes")
+        .select("id, price, duration_minutes, section_id")
         .eq("id", service_id)
         .eq("salon_id", salonId)
         .single();
@@ -376,14 +408,58 @@ async function createBooking(req, res) {
     const finalPrice = total_price || serviceData.price;
     const finalDuration = duration_minutes || serviceData.duration_minutes || 30;
 
-    // Check for booking conflicts
+    let employee = null;
+    if (employee_id) {
+      const { data: employeeData, error: employeeError } = await supabaseAdmin
+        .from("employees")
+        .select("id, full_name, role, is_active")
+        .eq("id", employee_id)
+        .eq("salon_id", salonId)
+        .single();
+
+      if (employeeError || !employeeData) {
+        return res.status(404).json({
+          ok: false,
+          error: "EMPLOYEE_NOT_FOUND",
+        });
+      }
+
+      if (!employeeData.is_active) {
+        return res.status(400).json({
+          ok: false,
+          error: "EMPLOYEE_INACTIVE",
+        });
+      }
+
+      const { data: assignment, error: assignmentError } = await supabaseAdmin
+        .from("service_employees")
+        .select("id")
+        .eq("salon_id", salonId)
+        .eq("service_id", service_id)
+        .eq("employee_id", employee_id)
+        .single();
+
+      if (assignmentError || !assignment) {
+        return res.status(400).json({
+          ok: false,
+          error: "EMPLOYEE_NOT_ASSIGNED",
+          details: "Employee is not assigned to this service",
+        });
+      }
+
+      employee = employeeData;
+    }
+
+    // Check for booking conflicts (respecting employee assignment)
     const conflictCheck = await checkBookingConflict(
       salonId,
       booking_date,
       booking_time,
       finalDuration,
       service_id,
-      home_service_id
+      home_service_id,
+      null,
+      employee ? employee.id : null
     );
 
     if (conflictCheck.hasConflict) {
@@ -410,6 +486,7 @@ async function createBooking(req, res) {
       total_price: finalPrice,
       status,
       source,
+      employee_id: employee ? employee.id : null,
       confirmed_at: status === "confirmed" ? new Date().toISOString() : null,
     };
 
@@ -420,7 +497,8 @@ async function createBooking(req, res) {
         *,
         services:service_id (id, name, price, duration_minutes),
         home_services:home_service_id (id, name, price, duration_minutes, category),
-        offers:offer_id (id, title, final_price)
+        offers:offer_id (id, title, final_price),
+        employees:employee_id (id, full_name, role, phone, email, is_active)
       `)
       .single();
 
@@ -448,6 +526,7 @@ async function createBooking(req, res) {
         customer_phone: booking?.customer_phone,
         service_id: booking?.service_id,
         home_service_id: booking?.home_service_id,
+        employee_id: booking?.employee_id,
       },
     });
 
@@ -500,13 +579,14 @@ async function updateBooking(req, res) {
       service_id,
       home_service_id,
       offer_id,
+      employee_id,
     } = req.body;
 
     // Verify booking belongs to salon and get existing data in one query
     const { data: existingBooking, error: checkError } = await supabaseAdmin
       .from("bookings")
       .select(
-        "id, status, booking_date, booking_time, service_id, home_service_id, duration_minutes, customer_name"
+        "id, status, booking_date, booking_time, service_id, home_service_id, duration_minutes, customer_name, employee_id"
       )
       .eq("id", bookingId)
       .eq("salon_id", salonId)
@@ -519,14 +599,114 @@ async function updateBooking(req, res) {
       });
     }
 
+    const resolvedServiceId =
+      service_id !== undefined ? service_id : existingBooking.service_id;
+    const resolvedHomeServiceId =
+      home_service_id !== undefined ? home_service_id : existingBooking.home_service_id;
+    const resolvedEmployeeId =
+      employee_id !== undefined ? employee_id : existingBooking.employee_id;
+
+    if (!resolvedServiceId && !resolvedHomeServiceId) {
+      return res.status(400).json({
+        ok: false,
+        error: "MISSING_SERVICE",
+        details: "Either service_id or home_service_id must be provided",
+      });
+    }
+
+    if (resolvedServiceId && resolvedHomeServiceId) {
+      return res.status(400).json({
+        ok: false,
+        error: "MULTIPLE_SERVICE_TYPES",
+      });
+    }
+
+    if (resolvedEmployeeId && !resolvedServiceId) {
+      return res.status(400).json({
+        ok: false,
+        error: "EMPLOYEE_REQUIRES_SERVICE",
+      });
+    }
+
+    let serviceData = null;
+    if (resolvedServiceId) {
+      const { data, error } = await supabaseAdmin
+        .from("services")
+        .select("id, salon_id, duration_minutes, price")
+        .eq("id", resolvedServiceId)
+        .eq("salon_id", salonId)
+        .single();
+
+      if (error || !data) {
+        return res.status(404).json({
+          ok: false,
+          error: "SERVICE_NOT_FOUND",
+        });
+      }
+      serviceData = data;
+    }
+
+    if (resolvedHomeServiceId) {
+      const { data, error } = await supabaseAdmin
+        .from("home_services")
+        .select("id, salon_id, duration_minutes, price")
+        .eq("id", resolvedHomeServiceId)
+        .eq("salon_id", salonId)
+        .single();
+
+      if (error || !data) {
+        return res.status(404).json({
+          ok: false,
+          error: "HOME_SERVICE_NOT_FOUND",
+        });
+      }
+    }
+
+    if (resolvedEmployeeId) {
+      const { data: employee, error: employeeError } = await supabaseAdmin
+        .from("employees")
+        .select("id, is_active")
+        .eq("id", resolvedEmployeeId)
+        .eq("salon_id", salonId)
+        .single();
+
+      if (employeeError || !employee) {
+        return res.status(404).json({
+          ok: false,
+          error: "EMPLOYEE_NOT_FOUND",
+        });
+      }
+
+      if (!employee.is_active) {
+        return res.status(400).json({
+          ok: false,
+          error: "EMPLOYEE_INACTIVE",
+        });
+      }
+
+      const { data: assignment, error: assignmentError } = await supabaseAdmin
+        .from("service_employees")
+        .select("id")
+        .eq("salon_id", salonId)
+        .eq("service_id", resolvedServiceId)
+        .eq("employee_id", resolvedEmployeeId)
+        .single();
+
+      if (assignmentError || !assignment) {
+        return res.status(400).json({
+          ok: false,
+          error: "EMPLOYEE_NOT_ASSIGNED",
+        });
+      }
+    }
+
     // Check for conflicts if date/time is being updated
     if ((booking_date || booking_time) && status !== "cancelled") {
       const checkDate = booking_date || existingBooking.booking_date;
       const checkTime = booking_time || existingBooking.booking_time;
       const checkDuration = duration_minutes || existingBooking.duration_minutes;
-      const checkServiceId = service_id || existingBooking.service_id;
-      const checkHomeServiceId =
-        home_service_id || existingBooking.home_service_id;
+      const checkServiceId = resolvedServiceId;
+      const checkHomeServiceId = resolvedHomeServiceId;
 
       const conflictCheck = await checkBookingConflict(
         salonId,
@@ -535,7 +715,8 @@ async function updateBooking(req, res) {
         checkDuration,
         checkServiceId,
         checkHomeServiceId,
-        bookingId // exclude current booking
+        bookingId, // exclude current booking
+        resolvedEmployeeId || null
       );
 
       if (conflictCheck.hasConflict) {
@@ -561,6 +742,7 @@ async function updateBooking(req, res) {
     if (service_id !== undefined) updates.service_id = service_id;
     if (home_service_id !== undefined) updates.home_service_id = home_service_id;
     if (offer_id !== undefined) updates.offer_id = offer_id;
+    if (employee_id !== undefined) updates.employee_id = employee_id;
 
     // Handle status changes and timestamps
     if (status !== undefined && status !== existingBooking.status) {
@@ -889,7 +1071,7 @@ async function unarchiveBooking(req, res) {
 async function getAvailability(req, res) {
   try {
     const salonId = req.ownerUser.salon_id;
-    const { date, service_id, home_service_id, duration_minutes } = req.query;
+    const { date, service_id, home_service_id, duration_minutes, employee_id } = req.query;
 
     if (!date) {
       return res.status(400).json({
@@ -905,7 +1087,7 @@ async function getAvailability(req, res) {
       });
     }
 
-    const cacheKey = `availability:${salonId}:${date}:${duration_minutes || "default"}`;
+    const cacheKey = `availability:${salonId}:${date}:${duration_minutes || "default"}:${employee_id || "any"}`;
 
     if (cache.has(cacheKey)) {
       const cached = cache.get(cacheKey);
@@ -932,20 +1114,28 @@ async function getAvailability(req, res) {
     // Get existing bookings for the date
     const { data: existingBookings } = await supabaseAdmin
       .from("bookings")
-      .select("booking_time, duration_minutes")
+      .select("booking_time, duration_minutes, employee_id")
       .eq("salon_id", salonId)
       .eq("booking_date", date)
       .in("status", ["confirmed", "pending"]);
 
+    const filteredBookings = employee_id
+      ? (existingBookings || []).filter(
+          (booking) =>
+            !booking.employee_id || booking.employee_id === employee_id
+        )
+      : existingBookings || [];
+
     const availableSlots = calculateAvailableSlots(
       workingHours,
-      existingBookings || [],
+      filteredBookings,
       duration_minutes ? parseInt(duration_minutes, 10) : null
     );
 
     const response = {
       ok: true,
       date,
+      employee_id: employee_id || null,
       available_slots: availableSlots,
       working_hours: workingHours,
     };
@@ -1107,14 +1297,15 @@ async function checkBookingConflict(
   duration,
   serviceId,
   homeServiceId,
-  excludeBookingId = null
+  excludeBookingId = null,
+  employeeId = null
 ) {
   const bookingTime = new Date(`${date}T${time}`);
   const endTime = new Date(bookingTime.getTime() + duration * 60000);
 
   let query = supabaseAdmin
     .from("bookings")
-    .select("id, customer_name, booking_time, duration_minutes")
+    .select("id, customer_name, booking_time, duration_minutes, employee_id")
     .eq("salon_id", salonId)
     .eq("booking_date", date)
     .in("status", ["confirmed", "pending"])
@@ -1130,13 +1321,40 @@ async function checkBookingConflict(
     query = query.neq("id", excludeBookingId);
   }
 
+  if (employeeId) {
+    query = query.or(
+      `employee_id.is.null,employee_id.eq.${employeeId}`
+    );
+  }
+
   const { data: overlappingBookings } = await query;
 
-  if (overlappingBookings && overlappingBookings.length > 0) {
+  const conflicts = (overlappingBookings || []).filter((booking) => {
+    if (
+      employeeId &&
+      booking.employee_id &&
+      booking.employee_id !== employeeId
+    ) {
+      return false;
+    }
+
+    const start = new Date(`1970-01-01T${booking.booking_time}`);
+    const end = new Date(
+      start.getTime() + (booking.duration_minutes || duration) * 60000
+    );
+
+    const overlap =
+      Math.max(start.getTime(), bookingTime.getTime()) <
+      Math.min(end.getTime(), endTime.getTime());
+
+    return overlap;
+  });
+
+  if (conflicts && conflicts.length > 0) {
     return {
       hasConflict: true,
       message: "Time slot overlaps with existing booking",
-      conflictingBookings: overlappingBookings,
+      conflictingBookings: conflicts,
     };
   }
 
