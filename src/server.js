@@ -58,7 +58,8 @@ const allowedOrigins = [
   "https://admindashboard988.netlify.app",
   "http://localhost:5174",
   "https://salondashboardbooking.netlify.app",
-  "https://salonbookin.netlify.app"
+  "https://salonbookin.netlify.app",
+  "https://juanworld.netlify.app"
 ].filter(Boolean);
 
 const corsOptions = {
