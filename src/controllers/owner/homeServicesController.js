@@ -20,13 +20,7 @@ async function getValidCategories(salonId) {
   if (!supabaseAdmin) return [];
 
   try {
-    // Get custom categories
-    const { data: customCategories } = await supabaseAdmin
-      .from("salon_categories")
-      .select("value, label, icon")
-      .eq("salon_id", salonId);
-
-    // Default categories
+    // Default categories (shared across all salons)
     const defaultCategories = [
       { value: "scissors", label: "Hair Services", icon: "scissors" },
       { value: "nails", label: "Nail Care", icon: "nails" },
@@ -35,8 +29,14 @@ async function getValidCategories(salonId) {
       { value: "star", label: "Premium Services", icon: "star" },
       { value: "facial", label: "Facial Care", icon: "facial" },
       { value: "massage", label: "Massage", icon: "massage" },
-      { value: "waxing", label: "Waxing", icon: "waxing" }
+      { value: "waxing", label: "Waxing", icon: "waxing" },
     ];
+
+    // Custom categories for this salon
+    const { data: customCategories } = await supabaseAdmin
+      .from("salon_categories")
+      .select("value, label, icon")
+      .eq("salon_id", salonId);
 
     return [...defaultCategories, ...(customCategories || [])];
   } catch (error) {
@@ -68,6 +68,7 @@ async function listHomeServices(req, res) {
         price,
         duration_minutes,
         category,
+        travel_fee,
         is_active,
         created_at,
         updated_at
@@ -132,6 +133,7 @@ async function getHomeServiceById(req, res) {
         price,
         duration_minutes,
         category,
+        travel_fee,
         is_active,
         created_at,
         updated_at
@@ -190,6 +192,7 @@ async function createHomeService(req, res) {
       price,
       duration_minutes,
       category,
+      travel_fee,
       is_active,
       slots,
     } = req.body;
@@ -220,6 +223,8 @@ async function createHomeService(req, res) {
       name: name.trim(),
       description: description?.trim() || null,
       price: price === undefined || price === null ? null : price,
+      travel_fee:
+        travel_fee === undefined || travel_fee === null ? null : travel_fee,
       duration_minutes:
         duration_minutes === undefined || duration_minutes === null
           ? null
@@ -241,6 +246,7 @@ async function createHomeService(req, res) {
         price,
         duration_minutes,
         category,
+        travel_fee,
         is_active,
         created_at,
         updated_at
@@ -326,6 +332,7 @@ async function updateHomeService(req, res) {
       price,
       duration_minutes,
       category,
+      travel_fee,
       is_active,
       slots,
     } = req.body;
@@ -355,6 +362,7 @@ async function updateHomeService(req, res) {
     if (duration_minutes !== undefined)
       updates.duration_minutes = duration_minutes;
     if (category !== undefined) updates.category = category;
+    if (travel_fee !== undefined) updates.travel_fee = travel_fee;
     if (is_active !== undefined) updates.is_active = is_active;
 
     updates.updated_at = new Date().toISOString();
@@ -383,6 +391,7 @@ async function updateHomeService(req, res) {
         price,
         duration_minutes,
         category,
+        travel_fee,
         is_active,
         created_at,
         updated_at

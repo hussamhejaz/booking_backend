@@ -44,6 +44,7 @@ async function listPublicHomeServices(req, res) {
         price,
         duration_minutes,
         category,
+        travel_fee,
         created_at
       `)
       .eq("salon_id", salonId)
@@ -134,13 +135,7 @@ async function getValidCategories(salonId) {
   if (!supabaseAdmin) return [];
 
   try {
-    // Get custom categories
-    const { data: customCategories } = await supabaseAdmin
-      .from("salon_categories")
-      .select("value, label, icon")
-      .eq("salon_id", salonId);
-
-    // Default categories
+    // Default categories (shared across all salons)
     const defaultCategories = [
       { value: "scissors", label: "Hair Services", icon: "scissors" },
       { value: "nails", label: "Nail Care", icon: "nails" },
@@ -149,8 +144,14 @@ async function getValidCategories(salonId) {
       { value: "star", label: "Premium Services", icon: "star" },
       { value: "facial", label: "Facial Care", icon: "facial" },
       { value: "massage", label: "Massage", icon: "massage" },
-      { value: "waxing", label: "Waxing", icon: "waxing" }
+      { value: "waxing", label: "Waxing", icon: "waxing" },
     ];
+
+    // Custom categories for this salon
+    const { data: customCategories } = await supabaseAdmin
+      .from("salon_categories")
+      .select("value, label, icon")
+      .eq("salon_id", salonId);
 
     return [...defaultCategories, ...(customCategories || [])];
   } catch (error) {

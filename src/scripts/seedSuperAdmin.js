@@ -7,7 +7,7 @@ require("dotenv").config({
 const { supabaseAdmin } = require("../supabase");
 
 // put your actual Supabase user ID here:
-const USER_ID = "1549d9ff-fff3-46f7-b48e-a4446eb81ba4";
+const USER_ID = "a92e6360-ff90-4021-b82d-c3ab8efe9fb2";
 
 (async () => {
   try {
